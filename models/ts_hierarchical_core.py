@@ -78,7 +78,8 @@ class TimeSeriesHRMCore(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         z_H = torch.zeros_like(x)
         z_L = torch.zeros_like(x)
-        cos_sin = self.rotary_emb()
+        # Use only the rotary embeddings required for the current sequence length
+        cos_sin = self.rotary_emb(x.size(1))
 
         for H_step in range(self.H_cycles):
             for L_step in range(self.L_cycles):

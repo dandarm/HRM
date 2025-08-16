@@ -4,11 +4,35 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-try:
+# ``flash_attn`` is an optional dependency.  The original implementation relies on
+# FlashAttention for efficiency, but the unit tests only require correctness.  To
+# allow the tests to run in environments where ``flash_attn`` is not installed we
+# provide a lightweight fallback based on PyTorch's built-in scaled dot-product
+# attention.
+try:  # pragma: no cover - external dependency
     from flash_attn_interface import flash_attn_func  # type: ignore[import]
-except ImportError:
-    # Fallback to FlashAttention 2
-    from flash_attn import flash_attn_func  # type: ignore[import]
+except Exception:  # pragma: no cover - handle absence of flash-attn
+    try:  # pragma: no cover
+        from flash_attn import flash_attn_func  # type: ignore[import]
+    except Exception:  # pragma: no cover
+        def flash_attn_func(q, k, v, causal=False):
+            """Fallback attention using PyTorch's scaled_dot_product_attention.
+
+            Parameters
+            ----------
+            q, k, v : torch.Tensor
+                Tensors of shape ``[batch, seq_len, n_heads, head_dim]``.
+            causal : bool, optional
+                Whether to apply a causal mask.
+            """
+            # PyTorch's implementation expects tensors with shape
+            # [batch, n_heads, seq_len, head_dim].
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            attn = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+            # Return shape [batch, seq_len, n_heads, head_dim] to match FlashAttention
+            return attn.transpose(1, 2)
 
 from models.common import trunc_normal_init_
 
@@ -91,8 +115,19 @@ class RotaryEmbedding(nn.Module):
         self.cos_cached = nn.Buffer(emb.cos(), persistent=False)
         self.sin_cached = nn.Buffer(emb.sin(), persistent=False)
 
-    def forward(self):
-        return self.cos_cached, self.sin_cached
+    def forward(self, seq_len: int | None = None):
+        """Return precomputed RoPE embeddings.
+
+        Parameters
+        ----------
+        seq_len: int | None
+            If provided, return only the first ``seq_len`` positions to match the
+            sequence length of the inputs.  This avoids shape mismatches when the
+            cached embeddings are longer than the processed sequence.
+        """
+        if seq_len is None:
+            return self.cos_cached, self.sin_cached
+        return self.cos_cached[:seq_len], self.sin_cached[:seq_len]
 
 
 class Attention(nn.Module):
