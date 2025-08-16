@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]  # .../HRM
 sys.path.insert(0, str(ROOT))
 
 from dataset import TimeSeriesWindows
+from models.ts_hierarchical_core import TimeSeriesHRMCore
 from models.ts_hrm_adapter import TimeSeriesHRM, ts_train_step
 
 
