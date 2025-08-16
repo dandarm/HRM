@@ -27,4 +27,10 @@ This repository has been extended to handle time series forecasting tasks. The m
   - Embeds inputs, forwards them through the HRM, and applies the regression head.
   - Includes a helper `ts_train_step` that performs a forward pass and returns the appropriate loss.
 
+## `models/ts_hierarchical_core.py`
+* **Purpose:** Offer an HRM-inspired core for continuous embeddings.
+* **Key Features:**
+  - Implements the hierarchical H/L block cycles with rotary attention.
+  - Produces transformed sequences compatible with `TimeSeriesHRM`.
+
 These components together allow the HRM architecture to model temporal dynamics, capturing both short-term variations and long-range trends within sequential data.
