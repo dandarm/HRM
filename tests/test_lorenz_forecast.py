@@ -1,9 +1,14 @@
+from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from dataset.time_series_dataset import TimeSeriesWindows
+import sys
+ROOT = Path(__file__).resolve().parents[1]  # .../HRM
+sys.path.insert(0, str(ROOT))
+
+from dataset import TimeSeriesWindows
 from models.ts_hrm_adapter import TimeSeriesHRM, ts_train_step
 
 
