@@ -36,7 +36,7 @@ def lorenz_series(T: int = 1000, dt: float = 0.01,
         xyz[t] = xyz[t - 1] + dt * np.array([x_dot, y_dot, z_dot], dtype=np.float32)
     return xyz
 
-
+# Non la usiamo più
 class GRUCore(nn.Module):
     """Minimal recurrent core to plug into :class:`TimeSeriesHRM`."""
 
@@ -48,7 +48,7 @@ class GRUCore(nn.Module):
         out, _ = self.rnn(x)
         return out
 
-
+      
 def main() -> None:
     series = lorenz_series()
     dataset = TimeSeriesWindows(series, series, T_in=20, T_out=1)
@@ -57,7 +57,12 @@ def main() -> None:
     d_in = series.shape[1]
     d_model = 64
     d_out = d_in
-    model = TimeSeriesHRM(GRUCore(d_model), d_in=d_in, d_model=d_model, d_out=d_out)
+
+    core = TimeSeriesHRMCore(d_model, num_heads=4, H_layers=2, L_layers=2)
+    model = TimeSeriesHRM(core, d_in=d_in, d_model=d_model, d_out=d_out)
+
+    #model = TimeSeriesHRM(GRUCore(d_model), d_in=d_in, d_model=d_model, d_out=d_out)
+
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     batch = next(iter(loader))
