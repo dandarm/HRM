@@ -1,5 +1,5 @@
-torch
 numpy
+torch
 adam-atan2-pytorch
 einops
 tqdm
