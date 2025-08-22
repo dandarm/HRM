@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
 import torch
+device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -60,13 +61,17 @@ def main() -> None:
     d_out = d_in
 
     core = TimeSeriesHRMCore(d_model, num_heads=4, H_layers=2, L_layers=2)
-    model = TimeSeriesHRM(core, d_in=d_in, d_model=d_model, d_out=d_out)
+    model = TimeSeriesHRM(core, d_in=d_in, d_model=d_model, d_out=d_out).to(device)
 
     #model = TimeSeriesHRM(GRUCore(d_model), d_in=d_in, d_model=d_model, d_out=d_out)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     batch = next(iter(loader))
+    for k, v in list(batch.items()):
+        if isinstance(v, torch.Tensor):
+            batch[k] = v.to(device, non_blocking=True)
+
     loss = ts_train_step(model, batch)
     loss.backward()
     opt.step()
