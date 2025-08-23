@@ -1,36 +1,30 @@
-# Time Series Extension for HRM
+# HRM for Time Series
 
-This repository has been extended to handle time series forecasting tasks. The main additions introduce a dataset helper, a flexible input embedding, a regression head, and an adapter that connects these components with the core Hierarchical Reasoning Model (HRM).
+**Goals: bring HRM’s latent hierarchical reasoning into the time‑series domain**
 
-## `dataset/time_series_dataset.py`
-* **Purpose:** Generate sliding windows of normalized input and target sequences.
-* **Key Features:**
-  - Computes per-feature mean and standard deviation, applying z-score normalization.
-  - Supports optional calendar-based extra features that are stacked alongside the sequence.
-  - Returns PyTorch tensors with keys `x_in`, `y_out`, and optional `time_extra`.
+**Repository changes: added a time‑series adapter (`models/ts_hrm_adapter.py: TimeSeriesHRM`), input embedding (`models/ts_embedding.py: TimeSeriesEmbedding`), regression head (`models/ts_head.py: TSRegressionHead`), sliding‑window datasets with a transparent router (`dataset/__init__.py: TimeSeriesWindows`, backed by `time_series_dataset_np.py` / `time_series_dataset_torch.py`), and dynamic attention backend selection with logging (`models/layers.py: set_use_flash`, logger `hrm.attn`).**
 
-## `models/ts_embedding.py`
-* **Purpose:** Map numerical sequences into a latent space.
-* **Key Features:**
-  - Offers sinusoidal positional encoding or linear projection of user-provided temporal features.
-  - Uses LayerNorm and a two-layer feed-forward block to project inputs to `d_model` dimensions.
+* **Data pipeline:** windowing **T\_in → T\_out** with normalization and optional calendar features via **`dataset.TimeSeriesWindows`** (NumPy or PyTorch backend selected by `dataset/__init__.py`). Outputs are PyTorch tensors ready for training.
+* **Temporal embedding:** project features to `d_model` with time encodings (sinusoidal and/or calendar) using **`models.ts_embedding.TimeSeriesEmbedding`**.
+* **Integration with the HRM core:** the L↔H core remains unchanged and is orchestrated by **`models.ts_hrm_adapter.TimeSeriesHRM`**; the output is produced by **`models.ts_head.TSRegressionHead`** in either one‑shot multi‑horizon or autoregressive mode.
+* **Rotary Position Embeddings (RoPE):** index `cos/sin` at actual positions (or `position_ids`) and reshape for correct broadcasting in **`models.layers.apply_rotary_pos_emb`**; this generalizes to windows shorter than the maximum length.
 
-## `models/ts_head.py`
-* **Purpose:** Produce predictions and compute regression losses.
-* **Key Features:**
-  - Can output direct values or Gaussian parameters (`mu`, `log_sigma`).
-  - Provides Mean Squared Error, Huber loss, or Gaussian negative log-likelihood.
+## Detailed Explanatory Overview
 
-## `models/ts_hrm_adapter.py`
-* **Purpose:** Bridge the time series modules with a pre-existing HRM core.
-* **Key Features:**
-  - Embeds inputs, forwards them through the HRM, and applies the regression head.
-  - Includes a helper `ts_train_step` that performs a forward pass and returns the appropriate loss.
+This adaptation adds a thin, purpose‑built layer around the original HRM so that it can read time‑series, reason at multiple temporal scales, and produce forecasts without changing the core algorithm. Conceptually, the adapter **`TimeSeriesHRM`** does three things: it turns raw measurements into a temporally meaningful latent representation; it lets the unchanged HRM core perform its iterative, hierarchical reasoning on that sequence; and it translates the resulting hidden states into the desired forecast horizon. Nothing in the mathematical heart of HRM is altered—only the way inputs and outputs are handled has been specialized for time.
 
-## `models/ts_hierarchical_core.py`
-* **Purpose:** Offer an HRM-inspired core for continuous embeddings.
-* **Key Features:**
-  - Implements the hierarchical H/L block cycles with rotary attention.
-  - Produces transformed sequences compatible with `TimeSeriesHRM`.
+The data interface is provided by **`dataset.TimeSeriesWindows`**, which accepts either NumPy arrays (`time_series_dataset_np.py`) or PyTorch tensors (`time_series_dataset_torch.py`) and converts a long series into overlapping input/output snippets. Each snippet contains an observed window of length **T\_in** and a prediction target of length **T\_out**. Before a window is built, features are normalized using training‑split statistics so the model sees comparable scales across time and across different series. The component returns PyTorch tensors for straightforward loading, batching, and device transfer. An optional hook injects calendar information (such as hour of day or day of week); when present, those descriptors are routed along with numeric features to the embedding. The choice between NumPy and PyTorch implementations is automatic and transparent thanks to the router in **`dataset/__init__.py`**, which exposes a single import name, `TimeSeriesWindows`.
 
-These components together allow the HRM architecture to model temporal dynamics, capturing both short-term variations and long-range trends within sequential data.
+At the input side, **`models.ts_embedding.TimeSeriesEmbedding`** projects numeric features to the model dimension and supplements them with time encodings. Sinusoidal encodings give a compact, differentiable representation of order and cyclicity; calendar encodings, when used, associate meaning with civil time. The result is a sequence of vectors whose geometry reflects *when* a value occurs, not only *how large* it is. That sequence is what the HRM core consumes. Because the embedding is causal and light‑weight, sequence length is constrained only by memory and compute, not by any architectural limit.
+
+Inside the model, the HRM core works exactly as in the original design—implemented for the time‑series wrapper in **`models/ts_hierarchical_core.py`** (H‑level and L‑level blocks) and the shared attention/layer utilities in **`models/layers.py`**. A fast, low‑level module updates at every step to track short‑range variation, while a slower, high‑level module updates at coarser intervals to capture trends and regime structure. Their alternation yields latent, multi‑pass reasoning over the sequence: low‑level dynamics settle locally; high‑level context re‑frames the computation; and the process repeats. Training remains stable and memory‑efficient through deep supervision and the one‑step gradient approximation, so the same machinery that worked on algorithmic tasks now applies to causal sequences without extra bookkeeping.
+
+On the output side, **`models.ts_head.TSRegressionHead`** maps hidden states to forecasts. It supports two operating modes. In the one‑shot, multi‑horizon case, the model reads **T\_in** observations and directly produces **T\_out** future steps from its final hidden states; this is efficient and coherent when horizons are moderate. In the autoregressive case, the model predicts one step ahead, feeds that prediction back, and repeats; this is flexible for long horizons and changing uncertainty profiles but must manage error accumulation. A probabilistic variant is available, in which the head outputs both a mean and a scale parameter so the loss can penalize mis‑calibrated confidence as well as bias; this is paired with the training helper **`models.ts_hrm_adapter.ts_train_step`** and the associated loss utilities.
+
+A critical fix concerns Rotary Position Embeddings. In practice, cosine/sine tables are often precomputed for a large maximum length; if those tables are applied blindly to a shorter sequence, dimension mismatches or mis‑aligned phases result. The adaptation therefore indexes the RoPE tables at the actual positions used in the current window (or at supplied position IDs in streaming scenarios) before applying the rotations to queries and keys. This behavior is implemented in **`models.layers.apply_rotary_pos_emb`** and is the intended usage of RoPE. It makes the attention mechanism sensitive to relative time differences while remaining agnostic to absolute length.
+
+Attention itself is implemented with a practical switch in **`models/layers.py`**. When the hardware and build allow it (Ampere‑class GPUs, half precision), the model uses **FlashAttention**; otherwise it falls back to PyTorch’s **scaled‑dot‑product attention**. The choice is controlled at runtime by **`set_use_flash`** and the `USE_FLASH` environment variable, and the logger **`hrm.attn`** prints a one‑line summary of the backend, device, and GPU capability. This guarantees that the model behaves identically across environments while taking advantage of modern kernels when available.
+
+Two additional pieces improve ergonomics and robustness. First, the training helper **`models.ts_hrm_adapter.ts_train_step`** ensures that both the model and every batch tensor live on the same device and dtype, preventing subtle runtime mismatches and making mixed‑precision training a one‑line change. Second, the dataset package exposes a single import—**`dataset.TimeSeriesWindows`**—that automatically selects the optimal implementation; users do not have to reason about optional dependencies. Together, these conventions lower the adoption cost for readers who would rather focus on modeling than on plumbing.
+
+Finally, a word on what we deliberately did not change. The hierarchical computation, the halting mechanism for adaptive compute (the **ACT/Q‑head** in the original HRM core), and the memory‑efficient training scheme are untouched. The adapter’s job is to respect those design choices while translating the world of time into the latent space that HRM understands and translating the latent computation back into forecasts a practitioner can use. In effect, the model now speaks the language of time: it knows how to ingest sequences, it reasons about them at multiple scales, and it returns predictions with either point estimates or calibrated uncertainty—without forcing the reader to read the code to learn how.

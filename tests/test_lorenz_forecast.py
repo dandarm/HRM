@@ -73,8 +73,11 @@ def main() -> None:
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    num_epochs = 5
-    for epoch in range(num_epochs):
+    l=None
+    num_tot_epochs = 150
+    loss_list = []
+    for epoch in range(num_tot_epochs):
+        avg_loss = []
         for batch in loader:
             for k, v in list(batch.items()):
                 if isinstance(v, torch.Tensor):
@@ -83,7 +86,11 @@ def main() -> None:
             loss = ts_train_step(model, batch)
             loss.backward()
             opt.step()
-        print(f"Epoch {epoch+1}/{num_epochs}, loss: {loss.item():.2f}")
+            l = loss.item()
+            avg_loss.append(l)
+        
+        loss_list.append(np.mean(avg_loss))
+        print(f"Epoch {epoch+1}/{num_tot_epochs}, loss: {l:.2f}")
 
     # Inference
     mu = torch.tensor(dataset.stats["mu"], dtype=torch.float32, device=device)
@@ -110,6 +117,13 @@ def main() -> None:
         plt.tight_layout()
         plt.savefig("lorenz_forecast.png")
         print("Saved plot to lorenz_forecast.png")
+        plt.close()
+
+        #plt.plot(range(num_tot_epochs), loss_list)
+        plt.figure()
+        plt.plot(loss_list)
+        plt.savefig("Loss_training_HRM.png")
+
     else:  # pragma: no cover - only executed when matplotlib missing
         print("Matplotlib not installed, skipping plot.")
 
