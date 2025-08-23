@@ -6,10 +6,15 @@ This project is a fork from [HRM](https://github.com/sapientinc/HRM)
 **Goals: bring HRM’s latent hierarchical reasoning into the time‑series domain**
 
 **Repository changes: 
+
 added a time‑series adapter (`models/ts_hrm_adapter.py: TimeSeriesHRM`), 
+
 input embedding (`models/ts_embedding.py: TimeSeriesEmbedding`), 
+
 regression head (`models/ts_head.py: TSRegressionHead`), 
+
 sliding‑window datasets with a transparent router (`dataset/__init__.py: TimeSeriesWindows`, backed by `time_series_dataset_np.py` / `time_series_dataset_torch.py`), and 
+
 dynamic attention backend selection with logging (`models/layers.py: set_use_flash`, logger `hrm.attn`).**
 
 * **Data pipeline:** windowing **T\_in → T\_out** with normalization and optional calendar features via **`dataset.TimeSeriesWindows`** (NumPy or PyTorch backend selected by `dataset/__init__.py`). Outputs are PyTorch tensors ready for training.
