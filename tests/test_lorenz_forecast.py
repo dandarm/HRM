@@ -4,6 +4,12 @@ import torch
 device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from torch import nn
 from torch.utils.data import DataLoader
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover - plotting is optional in tests
+    plt = None
 
 import sys
 ROOT = Path(__file__).resolve().parents[1]  # .../HRM
@@ -63,19 +69,49 @@ def main() -> None:
     core = TimeSeriesHRMCore(d_model, num_heads=4, H_layers=2, L_layers=2)
     model = TimeSeriesHRM(core, d_in=d_in, d_model=d_model, d_out=d_out).to(device)
 
-    #model = TimeSeriesHRM(GRUCore(d_model), d_in=d_in, d_model=d_model, d_out=d_out)
+    # model = TimeSeriesHRM(GRUCore(d_model), d_in=d_in, d_model=d_model, d_out=d_out)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    batch = next(iter(loader))
-    for k, v in list(batch.items()):
-        if isinstance(v, torch.Tensor):
-            batch[k] = v.to(device, non_blocking=True)
+    num_epochs = 5
+    for epoch in range(num_epochs):
+        for batch in loader:
+            for k, v in list(batch.items()):
+                if isinstance(v, torch.Tensor):
+                    batch[k] = v.to(device, non_blocking=True)
+            opt.zero_grad()
+            loss = ts_train_step(model, batch)
+            loss.backward()
+            opt.step()
+        print(f"Epoch {epoch+1}/{num_epochs}, loss: {loss.item():.2f}")
 
-    loss = ts_train_step(model, batch)
-    loss.backward()
-    opt.step()
-    print(f"Loss after one training step: {loss.item():.2f}")
+    # Inference
+    mu = torch.tensor(dataset.stats["mu"], dtype=torch.float32, device=device)
+    sd = torch.tensor(dataset.stats["sd"], dtype=torch.float32, device=device)
+    x_win = ((torch.tensor(series[: dataset.T_in], dtype=torch.float32, device=device) - mu) / sd).unsqueeze(0)
+    preds = []
+    with torch.no_grad():
+        for _ in range(dataset.T_in, len(series)):
+            y_hat, _ = model(x_win)
+            y_pred = y_hat[:, -1, :]
+            preds.append(y_pred.squeeze(0).cpu().numpy())
+            y_norm = (y_pred - mu) / sd
+            x_win = torch.cat([x_win[:, 1:, :], y_norm.unsqueeze(1)], dim=1)
+    preds = np.stack(preds)
+
+    # Plot ground truth and forecast for first dimension
+    if plt is not None:
+        plt.figure()
+        plt.plot(series[:, 0], label="Ground Truth")
+        plt.plot(range(dataset.T_in, len(series)), preds[:, 0], label="Forecast")
+        plt.xlabel("Time")
+        plt.ylabel("x")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig("lorenz_forecast.png")
+        print("Saved plot to lorenz_forecast.png")
+    else:  # pragma: no cover - only executed when matplotlib missing
+        print("Matplotlib not installed, skipping plot.")
 
 
 if __name__ == "__main__":
